@@ -1,0 +1,811 @@
+<%@ page language="java" contentType="text/html; charset=UTF-8"%>
+<!doctype html>
+<html>
+<head>
+	<%@ include file="/res/includes/tags.jsp" %>
+    <script>
+        var servers = [];        
+        var tempdat = {};
+        var deployments = null;
+        var MaterTimer;
+        var beatskip = 0;
+        var lastlistloaded = null;
+        var lastgadloaded = null;
+        var entityloaded = null;
+
+        const params = new URLSearchParams(window.location.search);
+        // Get specific parameters
+        const entity = params.get('e'); 
+        const entityid = params.get('i'); 
+        const entitycaller = params.get('c');         
+        var callback = NVLA(params.get("callback"), "gadgets.jsp"); 
+        
+        function InitPage() {
+            findGeoLocation();
+            LoadLocalDat();   
+            //MaterSpooler();    
+           // buildChoicePicker();  
+            if (entity == "SERVICEREQUEST")
+                LoadServiceRequest(entity, entityid, entitycaller);   
+            else if (entity == "DELIVERYORDER")
+                LoadDeliveryOrder(entity, entityid, entitycaller);   
+            else
+                LoadCommonEntity(entity, entityid, entitycaller);         
+        }
+
+        function MaterSpooler() {
+            //console.log("Running Master Spooler");
+            getJSONPost("702", "source=appstart", MaterSpoolerCallback);
+        }   
+
+        function MaterSpoolerCallback() {
+            if (jsonHttp.readyState == 4){ 
+                var res = jsonHttp.response;
+                //console.log(JSON.stringify(res));
+                if (res && res.length && res.length > 0) {
+                    for (var i=0; i<res.length; i++) {
+                        if (res[i].group == "Assignments") {
+                            if (res[i].Records && res[i].Records.length && res[i].Records.length > 0) {
+                                var cnt = "<div class=\"listtitle\">My Assignments</div>";
+                                for (var r=0; r<res[i].Records.length; r++) {
+                                    cnt += CastAssignment(res[i].Records[r]);                                    
+                                }                                
+                                getEcsObjectNS("AssignmentsHolder").innerHTML = cnt;  
+                            }                            
+                        }
+
+                        if (res[i].group == "Approvals") {
+                            if (res[i].Records && res[i].Records.length && res[i].Records.length > 0) {
+                                var cnt = "<div class=\"listtitle\">My Pending Approvals</div>";
+                                for (var r=0; r<res[i].Records.length; r++) {
+                                    cnt += CastApprover(res[i].Records[r]);                                    
+                                }                                
+                                getEcsObjectNS("ApprovalsHolder").innerHTML = cnt;  
+                            }                            
+                        }
+
+                        if (res[i].group == "Alerts") {
+                            if (res[i].Records && res[i].Records.length && res[i].Records.length > 0) {
+                                var cnt = "<div class=\"listtitle\">Notifications &amp; Alerts</div>";
+                                for (var r=0; r<res[i].Records.length; r++) {
+                                    cnt += CastAlert(res[i].Records[r]);                                    
+                                }                                
+                                getEcsObjectNS("AlertsHolder").innerHTML = cnt;  
+                            }                            
+                        }
+                    }
+                }
+                EmailSpooler();
+            }
+        }
+
+        function CastAssignment(rec) {
+            var overshadow = "";
+            if (rec.remaining && rec.remaining < 1440 * -5) {
+                overshadow = " style=\"box-shadow: 0px 0px 4px 4px #FFAAAA;\"";
+            } else if (rec.remaining && rec.remaining < 1440 * -2) {
+                overshadow = " style=\"box-shadow: 0px 0px 4px 4px #FFBBBB;\"";
+            } else if (rec.remaining && rec.remaining < 0) {
+                overshadow = " style=\"box-shadow: 0px 0px 4px 4px #FFDDDD;\"";
+            } 
+            //console.log(rec);
+            var asslink = "";
+            if (rec.parent && rec.parent == "SERVICEREQUEST")
+                asslink = " onClick=\"javascript:LoadServiceRequest('SERVICEREQUEST', '" + rec.parentid + "', 'ASSIGNMENTS')\" ";
+            else if (rec.parent && rec.parent == "CONTACTIN")
+                asslink = " onClick=\"javascript:LoadCommonEntity('CONTACTFORM', '" + rec.parentid + "', 'ASSIGNMENTS')\" ";
+
+            var ret = "<div class=\"commoncasting\" " + overshadow + asslink + ">" 
+                + "<div class=\"listiconcell\">"
+                    +"<img src=\"res/img/" + rec.icon + ".png\"></div>"
+                + "<div style=\"display: table-cell; padding: 5px;\">"
+                    + "<div class=\"listheader\">" + rec.date + "</div>"
+                    + "<div>" + rec.summary  + "</div>"
+                + "</div>"               
+            + "</div>";
+
+            return ret;
+        }
+
+        function CastApprover(rec) {    
+            var reclink = "";
+            if (rec.type && rec.parentid) {
+                if (rec.type == "SOMETHING") {
+
+                } else {
+                    reclink = " onClick=\"javascript:LoadCommonEntity('" + rec.type + "', '" + rec.parentid + "', 'APPROVALS')\" ";
+                }
+            } 
+            
+            var ret = "<div class=\"commoncasting\" " + reclink +  ">" 
+                + "<div style=\"display: table-cell; width: 20px; padding: 5px; text-align: center;\">"
+                    + "<i class=\"fa-solid fa-chevron-right\"></i></div>"
+                + "<div style=\"display: table-cell; padding: 5px;\">"
+                    + "<div>" + rec.parent + "</div>"
+                    + "<div class=\"subline\">" + rec.deadline + "</div>"
+                + "</div>"               
+            + "</div>";
+            return ret;
+        }
+
+        function CastAlert(rec) {
+            var ret = "<div style=\"border-bottom: 1px solid #444444; display: table; width: calc(100% - 10px);\">" 
+                + "<div style=\"display: table-cell; width: 20px; padding: 5px; text-align: center;\">"
+                    + "<i class=\"fa-solid fa-chevron-right\"></i></div>"
+                + "<div style=\"display: table-cell; padding: 5px;\">"
+                    + rec.message + "<br>"
+                    + rec.from 
+                + "</div>"               
+            + "</div>";
+            return ret;
+        }
+
+        
+        function EmailSpooler() {
+            getJSONPost("7403", "id=irfan.qazi@gmail.com&folder=Inbox", EmailSpoolerCallback);
+        }
+
+        function EmailSpoolerCallback() {
+            if (jsonHttp.readyState == 4){ 
+                var res = jsonHttp.response;    
+                var cnt = "<div class=\"listtitle\">Inbox</div>";    
+                if (res && res.length && res.length > 0) {
+                    for (var i=0; i<res.length; i++) {
+                        cnt += CastEmailList(res[i]);
+                    }
+                }
+                getEcsObjectNS("EmailHolder").innerHTML = cnt;     
+                GadgetsSpooler();             
+            }
+        }
+        
+
+        function GadgetsSpooler() {
+            if (beatskip > 120) beatskip = 0;
+            //console.log(beatskip);
+            if (beatskip == 0) {
+                getJSONPost("7012", null, GadgetsSpoolerCallback);   
+            } else {
+                MaterTimer = setTimeout(MaterSpooler, 30000); 
+                findGeoLocation();
+            }            
+            beatskip++;
+        }
+
+        function GadgetsSpoolerCallback() {
+            if (jsonHttp.readyState == 4){ 
+                var res = jsonHttp.response;    
+                var cnt = "<div class=\"listtitle\">Modules</div>";    
+                if (res && res.length && res.length > 0) {
+                    for (var i=0; i<res.length; i++) {
+                        cnt += "<div class=\"gadgeticon\" onClick=\"javascript:LoadSubGadgets('" + res[i].function + "')\">"
+                            + "<img src=\"res/ico/" + res[i].icon + ".png\">"
+                            + "<br>" + res[i].title + "</div>";
+                    }
+                }
+                getEcsObjectNS("GadgetsHolder").innerHTML = cnt;     
+                MaterTimer = setTimeout(MaterSpooler, 30000);        
+                
+                PreBranchList();
+            }
+        }
+       
+
+        function goHomePage(func) {
+            document.location.href = "home.jsp?f=" + func;
+        }
+
+        function toggleMasterIcons(group) {
+            /*            
+            getEcsObject("CommonEntityHolder").display = 'none';
+            
+            if (group == "CommonListHolder" || group == "CommonEntityHolder") {
+                getEcsObject("mastericons").display = 'none';
+            } else {
+                getEcsObject("mastericons").display = '';
+            }
+            */      
+            // getEcsObject(group).display = '';
+        }
+
+        function LoadSubGadgets(group) {
+            lastgadloaded = group;
+            getJSONPost("7013", "id=" + group, SubGadgetsCallback);            
+        }
+
+        function LoadLastGadgets() {
+            getJSONPost("7013", "id=" + lastgadloaded, SubGadgetsCallback);            
+        }
+
+        function SubGadgetsCallback() {
+            if (jsonHttp.readyState == 4){ 
+                var res = jsonHttp.response; 
+
+                var cnt = "<div class=\"listtitle\">Modules</div>";    
+                if (res && res.length && res.length > 0) {
+                    for (var i=0; i<res.length; i++) {
+                        var params = "id=" + res[i].section;
+                        if (res[i].show && res[i].show != "")
+                            params += "&show=" + res[i].show;
+                        if (res[i].show2 && res[i].show2 != "")
+                            params += "&show2=" + res[i].show2;
+                        if (res[i].open && res[i].open != "")
+                            params += "&open=" + res[i].open;
+                        if (res[i].branch && res[i].branch == 2) {  
+                            params += "&branchid=ENTERPRISE";           // branch hard coded for now   
+                            cnt += "<div class=\"subgadgeticon\" onClick=\"javascript:selectBranch('loadlist', '" + params + "')\">"
+                                + "<img src=\"res/ico/" + res[i].icon + ".png\">"
+                                + "<br>" + res[i].title + "</div>";                           
+                        } else {                        
+                            cnt += "<div class=\"subgadgeticon\" onClick=\"javascript:LoadList('" + params + "')\">"
+                                + "<img src=\"res/ico/" + res[i].icon + ".png\">"
+                                + "<br>" + res[i].title + "</div>";
+                        }
+                    }
+                }
+                getEcsObjectNS("SubGadgetsHolder").innerHTML = cnt; 
+                toggleMasterIcons("SubGadgetsHolder");
+            }
+        }
+
+        function LoadList(params) {
+            lastlistloaded = params;
+            getJSONPost("7014", params, LoadListCallback);  
+        }
+
+        var last_entity_caller = null;
+        
+        function LoadCommonEntity(entity, entityid, entitycaller) {
+            last_entity_caller = entitycaller;           
+            //console.log(entity);
+            
+            console.log("Proing Item : " + entity + " - " + entityid);
+            getJSONPost("708", "type=" + entity + "&id=" + entityid, LoadCommonEntityCallback);  
+            
+        }
+
+        function LoadCommonEntityCallback() {
+            if (jsonHttp.readyState == 4){ 
+                var res = jsonHttp.response; 
+                console.log(res);
+                entityloaded = { dtype:'COMMON', ptype: res.ptype, id: res.id};
+                var cnt = "<div class=\"listtitle\">" + res.header + "</div>" 
+                + "<div id=\"listicons\">"
+                    + "<div id=\"tasksbutton\" onClick=\"javascript:localCallback()\"><i class=\"fa-solid fa-backward-step\"></i></i><br>Back</div>";
+                    if (res.ACTIONS && res.ACTIONS.length && res.ACTIONS.length > 0) {
+                        console.log(res.ACTIONS);
+                        for (var b=0; b<Least(res.ACTIONS.length, 4); b++) {
+                            if( res.ACTIONS[b].t == "CREATE"){
+                                cnt += "<div id=\"tasksbutton\" "
+                                + " onClick=\"javascript:functionTrans('" + res.ptype + "','" + res.id + "', '" + res.ACTIONS[b].a + "', '" + res.bid + "')\">"
+                                + "<i class=\"" + transWow(res.ACTIONS[b].i) + "\"></i><br>" + res.ACTIONS[b].t + "</div>";
+                            }
+                        }
+                    }     
+                    if (!res.ACTIONS || !res.ACTIONS.length || res.ACTIONS.length < 5)
+                        cnt += "<div id=\"tasksbutton\" "
+                                + " onClick=\"javascript:goHomePage('AssignmentsHolder')\">"
+                                + "<i class=\"fa-solid fa-house\"></i><br>Tasks</div>";     
+                    if (!res.ACTIONS || !res.ACTIONS.length || res.ACTIONS.length < 2)
+                        cnt += "<div id=\"tasksbutton\" "
+                                + " onClick=\"javascript:goHomePage('ApprovalsHolder')\">"
+                                + "<i class=\"fa-regular fa-square-check\"></i><br>Approvals</div>";  
+                    if (!res.ACTIONS || !res.ACTIONS.length || res.ACTIONS.length < 3)
+                        cnt += "<div id=\"tasksbutton\" "
+                                + " onClick=\"javascript:goHomePage('AlertsHolder')\">"
+                                + "<i class=\"fa-regular fa-bell\"></i><br>Alerts</div>"; 
+                    if (!res.ACTIONS || !res.ACTIONS.length || res.ACTIONS.length < 4)
+                        cnt += "<div id=\"tasksbutton\" "
+                                + " onClick=\"javascript:goHomePage('EmailHolder')\">"
+                                + "<i class=\"fa-solid fa-envelope\"></i><br>Mailbox</div>";
+                    
+                    
+                cnt+= "</div>";
+
+                cnt += "<div style=\"padding: 10px;\">";
+
+
+                cnt += "<table class=\"entitymast\">";
+                if (res.company)
+                    cnt += "<tr><td colspan=\"2\" style=\"font-size: 16px; font-weight: bold;\">" + res.company + "</td></tr>";    
+                if (res.date || res.statusmessage) {
+                    cnt += "<tr>";
+                    if (res.createddate)
+                        cnt += "<td style=\"font-size: 14px;\">" + res.createddate + "</td>" ;
+                    if (res.statusmessage)
+                        cnt += "<td style=\"font-size: 14px;\">" + res.statusmessage + "</td>" ;
+                    cnt += "<tr>";
+                     }
+                if (res.createdbyname)
+                    cnt += "<tr><td colspan=\"2\" style=\"font-size: 14px; \">" + res.createdbyname + "</td></tr>" ;
+                cnt += "</table>";                
+                
+
+                if (res.MAIN) {
+                    cnt += "<table class=\"entitymain\">"
+                    var entries = Object.entries(res.MAIN);
+                    for (var e=0; e<entries.length; e++) {
+                        cnt += "<tr><td>" + entries[e][0] + "</td>";
+                        cnt += "<td> : " + entries[e][1] + "</td></tr>"; 
+                    }
+                    cnt += "</table>"; 
+                }
+
+                if (res.DETAILS) { 
+                    console.log("DATA : ", res.DETAILS);
+                    cnt += "<table class=\"detailstable\">" 
+                        +"<tr><th colspan=\"2\">Details</th></tr>"
+                        if(res.DETAILS){
+                            var details = Object.entries(res.DETAILS);
+                            for(var d=0;d<details.length;d++){
+                                cnt+="<tr><td>"+details[d][0]+":</td>";
+                                cnt+="<td>"+details[d][1]+"</td></tr>"
+                            }
+                        }
+                        if(res.DETAILS.Salesman)
+                           cnt+="<tr><td>Salesman: </td><td>"+res.DETAILS.Salesman +"</td></tr>"
+                        if(res.DETAILS.Terms)
+                           cnt+="<tr><td>Terms: </td><td>"+res.DETAILS.Terms+"</td></tr>"
+                           if(res.DETAILS.Exchange)
+                           cnt+="<tr><td>Exchange: </td><td>"+res.DETAILS.Exchange+"</td></tr>" 
+                        if(res.DETAILS.Validity)
+                           cnt+="<tr><td>Validity:  </td><td>"+res.DETAILS.Validity+"</td></tr>"  
+                        if(res.DETAILS.Remarks)
+                           cnt+="<tr><td>Remarks:  </td><td>"+res.DETAILS.Remarks+"</td></tr>" 
+                        if(res.DETAILS.Currency)
+                           cnt+="<tr><td>Currency:  </td><td>"+res.DETAILS.Currency+"</td></tr>" 
+                        if(res.DETAILS.baddress)
+                           cnt+="<tr><td>billing address:  </td><td>"+res.DETAILS.baddress+"</td></tr>" 
+                        if(res.DETAILS.Freight)
+                           cnt+="<tr><td>Freight:  </td><td>"+res.DETAILS.Freight+"</td></tr>" 
+                        if(res.DETAILS.saddress)
+                           cnt+="<tr><td>shipping address:  </td><td>"+res.DETAILS.saddress+"</td></tr>"
+                    cnt += "</table>";
+                }
+
+
+                if (res.ITEMS) {
+                    if (res.ltype && res.ltype == 13)
+                        cnt += CastInstallationItems(res.ITEMS);
+                    else
+                        cnt += CastInvoiceItems(res.ITEMS);
+                }
+
+                if (res.ATTACHMENTS) {
+                    cnt += CastAttachments(res.ATTACHMENTS, res.id, res.ptype);
+                }
+
+                if (res.COMMENTS) {
+                    cnt += "<div id=\"commentsholder\">" + CastComments(res.COMMENTS) + "</div>";
+                }
+
+                if (res.REMINDERS) {
+                    setReminderProp(res.bid, res.cid, res.lid, res.id);
+                    cnt += CastReminders(res.REMINDERS);
+                }
+
+
+                if (res.EVENTS) {
+                    cnt += CastEvents(res.EVENTS);
+                }
+
+                if (res.APPROVALS) {
+                    cnt += CastApprovals(res.APPROVALS);
+                }
+
+                if (res.EMAIL) {
+                    cnt += CastEmails(res.EMAIL);
+                }
+                cnt += "</div>";
+                getEcsObjectNS("CommonEntityHolder").innerHTML = cnt; 
+                toggleMasterIcons("CommonEntityHolder");
+            }
+        }
+
+        function LoadServiceRequest(entity, entityid, entitycaller) {
+            devLog("Proing Item : " + entity + " - " + entityid);
+            last_entity_caller = entitycaller;
+            getJSONPost("709", "id=" + entityid, LoadServiceRequestCallback);  
+        }
+        
+        function LoadDeliveryOrder(entity, entityid, entitycaller) {
+            devLog("Proing Item : " + entity + " - " + entityid);
+            last_entity_caller = entitycaller;
+            getJSONPost("7076", "id=" + entityid, LoadDeliveryOrderCallback);  
+        }
+
+        function getEntityBackButton() {
+            var entitybackbutton = "toggleMasterIcons('CommonListHolder')";
+            if (last_entity_caller && last_entity_caller == "APPROVALS")
+                entitybackbutton = "toggleMasterIcons('ApprovalsHolder')";
+            else if (last_entity_caller && last_entity_caller == "ASSIGNMENTS")
+                entitybackbutton = "toggleMasterIcons('AssignmentsHolder')";
+            return entitybackbutton;
+        }
+
+        function LoadServiceRequestCallback() {
+            if (jsonHttp.readyState == 4){ 
+                var res = jsonHttp.response; 
+                console.log("service call :  ", res);
+                entityloaded = { dtype:'SERVICEREQUEST', ptype: res.ptype, id: res.id};
+                var cnt = "<div class=\"listtitle\">" + res.header + "</div>" 
+
+                + "<div id=\"listicons\">"
+                    + "<div id=\"tasksbutton\" onClick=\"javascript:localCallback()\"><i class=\"fa-solid fa-backward-step\"></i></i><br>Back</div>";
+                    if (res.ACTIONS && res.ACTIONS.length && res.ACTIONS.length > 0) {
+                        for (var b=0; b<Least(res.ACTIONS.length, 4); b++) {
+                            cnt += "<div id=\"tasksbutton\" "
+                                + " onClick=\"javascript:functionTransSR('" + res.id + "', '" + res.ACTIONS[b].a + "', '" + res.bid + "')\">"
+                                + "<i class=\"" + transWow(res.ACTIONS[b].i) + "\"></i><br>" + res.ACTIONS[b].t + "</div>";
+                        }
+                    }
+
+                    /*
+                    cnt += "<div id=\"tasksbutton\" onClick=\"javascript:xxx('EmailHolder')\"><i class=\"fa-regular fa-floppy-disk\"></i><br>Save</div>"
+                    + "<div id=\"tasksbutton\" onClick=\"javascript:xxx('GadgetsHolder')\"><i class=\"fa-solid fa-file\"></i></i><br>Publish</div>"
+                    + "<div class=\"moreparent\" onClick=\"javascript:xxx('GadgetsHolder')\"><i class=\"fa-regular fa-square-caret-down\"></i><br>More"
+                        + "<table class=\"morechild\">"
+                            + "<tr><td><a href=\"javascript:LoadCommonEntity('" + res.ptype + "', '" + res.id + "', '" + last_entity_caller + "')\"><i class=\"fa-solid fa-arrows-rotate\"></i> Refresh</a></td></tr>"
+                        + "</table>"
+                    + "</div>";
+                    */
+
+                cnt += "</div>";
+
+                cnt += "<div style=\"padding: 10px;\">";
+                if (res.company)
+                    cnt += "<div style=\"font-size: 16px; font-weight: bold; padding-bottom: 5px; color: NAVY;\">" + res.company + "</div>" ;
+                if (res.summary)
+                    cnt += "<div style=\"font-size: 16px; font-weight: bold; padding-bottom: 5px;\">" + res.summary + "</div>" ;
+                
+                if (res.date)
+                    cnt += "<div style=\"font-size: 14px; padding-bottom: 5px;\">" + res.date + "</div>" ;
+                if (res.statusmessage)
+                    cnt += "<div style=\"font-size: 14px; padding-bottom: 5px;\">" + res.statusmessage + "</div>" ;
+
+                if (res.MAIN) {
+                    cnt += "<div style=\"font-size: 12px; display: table; width: 100%; border: 1px solid #999999;\">";
+                    var entries = Object.entries(res.MAIN);
+                    for (var e=0; e<entries.length; e++) {
+                        cnt += "<div style=\"display: table-row; padding: 2px;\"><div style=\"display: table-cell; font-size: 14px;\">" + entries[e][0] + "</div>" ;
+                        cnt += "<div style=\"display: table-cell; font-size: 14px; padding: 2px;\"> : " + entries[e][1] + "</div></div>" ;
+                    }
+                    cnt += "</div>" ;
+                }
+
+                if (res.DETAILS) { 
+                    cnt += "<table class=\"detailstable\">" 
+                        + "<tr><th colspan=\"2\">Details</th></tr>"; 
+                    var entries = Object.entries(res.DETAILS);
+                    for (var e=0; e<entries.length; e++) {
+                        if (entries[e][1] != ""
+                            && entries[e][1] != "0.0") {
+                                if (entries[e][0] == "Exchange" && entries[e][1] == "1.0") {
+                                    //do nothing
+                                }
+                                else
+                                {
+                                    cnt += "<tr>"
+                                + "<td>" + entries[e][0] + " : </td>"
+                                + "<td>" + entries[e][1] + "</td>"
+                                + "</tr>";
+                                }                            
+                        }
+                    }
+                    cnt += "</table>";
+                }
+
+
+                if (res.ITEMS) {
+                    cnt += CastServiceRequestItems(res.ITEMS);
+                }
+
+                if (res.ATTACHMENTS) {
+                    cnt += CastAttachments(res.ATTACHMENTS, res.id, res.ptype);
+                }
+
+                if (res.COMMENTS) {
+                    cnt += CastComments(res.COMMENTS);
+                }
+
+                if (res.REMINDERS) {
+                    cnt += CastReminders(res.REMINDERS);
+                }
+
+                if (res.EVENTS) {
+                    cnt += CastEvents(res.EVENTS);
+                }
+
+                if (res.APPROVALS) {
+                    cnt += CastApprovals(res.APPROVALS);
+                }
+
+                if (res.EMAIL) {
+                    cnt += CastEmails(res.EMAIL);
+                }
+                cnt += "</div>";
+                getEcsObjectNS("CommonEntityHolder").innerHTML = cnt; 
+                toggleMasterIcons("CommonEntityHolder");
+            }
+        }
+
+        function LoadDeliveryOrderCallback() {
+            if (jsonHttp.readyState == 4){ 
+                var res = jsonHttp.response; 
+                console.log(res);
+                entityloaded = { dtype:'DELIVERYORDER', ptype: res.deliveryid, id: res.deliveryid};
+                var cnt = "<div class=\"listtitle\">" + res.deliveryid + "</div>" 
+
+                + "<div id=\"listicons\">"
+                    + "<div id=\"tasksbutton\"><i class=\"fa-solid fa-backward-step\" onClick=\"javascript:" + getEntityBackButton() + "\"></i></i><br>Back</div>";
+                    if (res.ACTIONS && res.ACTIONS.length && res.ACTIONS.length > 0) {
+                        for (var b=0; b<Least(res.ACTIONS.length, 4); b++) {
+                            cnt += "<div id=\"tasksbutton\" "
+                                + " onClick=\"javascript:functionTransSR('" + res.id + "', '" + res.ACTIONS[b].a + "', '" + res.bid + "')\">"
+                                + "<i class=\"" + transWow(res.ACTIONS[b].i) + "\"></i><br>" + res.ACTIONS[b].t + "</div>";
+                        }
+                    }
+
+                    /*
+                    cnt += "<div id=\"tasksbutton\" onClick=\"javascript:xxx('EmailHolder')\"><i class=\"fa-regular fa-floppy-disk\"></i><br>Save</div>"
+                    + "<div id=\"tasksbutton\" onClick=\"javascript:xxx('GadgetsHolder')\"><i class=\"fa-solid fa-file\"></i></i><br>Publish</div>"
+                    + "<div class=\"moreparent\" onClick=\"javascript:xxx('GadgetsHolder')\"><i class=\"fa-regular fa-square-caret-down\"></i><br>More"
+                        + "<table class=\"morechild\">"
+                            + "<tr><td><a href=\"javascript:LoadCommonEntity('" + res.ptype + "', '" + res.id + "', '" + last_entity_caller + "')\"><i class=\"fa-solid fa-arrows-rotate\"></i> Refresh</a></td></tr>"
+                        + "</table>"
+                    + "</div>";
+                    */
+
+                cnt += "</div>";         
+               
+                cnt += "<div style=\"padding: 10px;\">"
+                    +"<div>"
+                        if(res.companyname)
+                            cnt+="<div style=\"font-size: 16px; font-weight: bold; padding-bottom: 5px; color: NAVY;\">"+res.companyname+"</div>";
+                        if(res.orderdate)
+                            cnt+="<div style=\"font-size: 16px; font-weight: bold; padding-bottom: 5px;\">Order Date: "+res.orderdate +"</div>"
+                        if(res.orderid)
+                            cnt +="<div style=\"font-size: 16px; font-weight: bold; padding-bottom: 5px;\">OrderId: "+res.orderid+"</div>"
+                        if(res.description||res.entrydate)
+                           cnt+="<div style=\"font-size: 14px; padding-bottom: 5px;\">Type: "+res.description+ ",&nbsp;&nbsp; Date: "+res.entrydate+"</div>"
+                        if(res.movementtype)
+                           cnt+="<div style=\"font-size: 14px; padding-bottom: 5px; \">"+res.movementtype+"</div>"    
+                cnt+="</div>"   
+               +"<div>"
+                +"<table class=\"detailstable\">"
+                    +"<tbody>"
+                        +"<tr>"
+                            +"<th colspan=\"2\">"
+                                +"<div class=\"gtitle\">Pickup Location</div>"
+                            +"</th>"
+                        +"</tr>"
+                        if(res.origin.fulladdress)
+                           cnt+="<tr><td>Address : </td><td>"+res.origin.fulladdress +"</td></tr>"
+                        if(res.origin.postcode)
+                           cnt+="<tr><td>Pincode : </td><td>"+res.origin.postcode+"</td></tr>"
+                        if(res.origin.mobile)
+                           cnt+="<tr><td>Contact :  </td><td>"+res.origin.mobile+"</td></tr>"  
+                   cnt+="</tbody>"
+                +"</table>"  
+                +"</div>"
+                +"<div>"
+                +"<table class=\"detailstable\">"   
+                    +"<tbody>"
+                        +"<tr>"
+                            +"<th colspan=\"2\">"
+                                +"<div class=\"gtitle\">Delivery Location</div>"
+                            +"</th>"
+                        +"</tr>"
+                        if(res.destination.fulladdress)
+                           cnt+="<tr><td>Address : </td><td>"+res.destination.fulladdress +"</td></tr>"
+                        if(res.destination.postcode)
+                           cnt+="<tr><td>Pincode : </td><td>"+res.destination.postcode+"</td></tr>"
+                        if(res.destination.mobile)
+                           cnt+="<tr><td>Contact :  </td><td>"+res.destination.mobile+"</td></tr>"  
+                    cnt+="</tbody>"
+                +"</table>"  
+                +"</div>"
+                +"<div>"
+                +"<table class=\"detailstable\">"
+                    +"<tbody>"
+                        +"<tr>"
+                            +"<th colspan=\"2\">"
+                                +"<div class=\"gtitle\">Document Details</div>"
+                            +"</th>"
+                        +"</tr>"
+                        +"<tr>"
+                            +"<td colspan=\"2\">"
+                        if(res.waybillnumber)
+                           cnt+="<tr><td>Waybill Number: </td><td>"+res.waybillnumber+"</td></tr>"
+                        if(res.orderdate)
+                           cnt+="<tr><td>Waybill Date: </td><td> "+res.orderdate+"</td></tr>"   
+                        if(res.document.type)      
+                              cnt+="<tr><td>Document Type: </td><td>"+res.document.type+"</td></tr>"
+                        if(res.document.number)      
+                              cnt+="<tr><td>Document Number </td><td>"+res.document.number+"</td></tr>"
+                          if(res.document.date)      
+                              cnt+="<tr><td>Document Date: </td><td>"+res.document.date+"</td></tr>"
+                            +"</td>"
+                        +"</tr>"
+                    +"</tbody>"
+                +"</table>"  
+                +"</div>"
+                +"<div>"
+                    +"<table class=\"detailstable\">"
+                        +"<tbody>"
+                            +"<tr>"
+                                +"<th colspan=\"4\">"
+                                    +"<div class=\"gtitle\">Consignment Details</div>"
+                                +"</th>"
+                            +"<tr>"
+                                if(res.totalpackages)
+                                   cnt+="<td>Total Packages : "+res.totalpackages+"</td>"
+                                if(res.products)
+                                   cnt+="<td>Products: "+res.products+"</td>"
+                                if(res.totalquantity)
+                                   cnt+="<td>Total Quantity: "+res.totalquantity+"</td>"
+                            cnt+="</tr>"
+                            +"<tr>"
+                                if(res.volweight)
+                                   cnt+="<td colspan=\"2\">Total Weight: "+res.volweight+"</td>"
+                                if(res.volweight)
+                                   cnt+="<td colspan=\"2\">Vol Weight:: "+res.volweight+"</td>"
+                                  +"</tr>" 
+                            +"<tr>"
+                                if(res.totalpackages)
+                                   cnt+="<td colspan=\"4\">Volume in CC: "+res.totalpackages+"</td>"
+                            +"</tr>"   
+                            +"<tr>"
+                                if(res.goodsvalue)
+                                   cnt+="<td colspan=\"4\">Goods Value: "+res.goodsvalue+"</td>"
+                            cnt+="</tr>"   
+                        +"</tbody>"
+                    +"</table>"  
+                +"</div>"
+                +"<div>"
+                    for(var i=0;i<res.items.length;i++){
+                        cnt+="<table class=\"detailstable\">"
+                            +"<tbody>"
+                                +"<tr>"
+                                    +"<th colspan=\"2\">"
+                                        +"<div class=\"gtitle\"> Product Details </div>"
+                                    +"</th>"
+                                +"</tr>"
+                                +"<tr>"
+                                    +"<td>Product Name:</td>"
+                                    if(res.items[i].productname)
+                                        cnt+="<td>"+res.items[i].productname+" </td>"
+                                    cnt+="</tr>"
+                                    +"<tr>"
+                                    +"<td>Qty:</td>"
+                                    if(res.items[i].quantity)
+                                        cnt+="<td>"+res.items[i].quantity+" </td>"
+                                    cnt+="</tr>"
+                                    +"<tr>"
+                                    +"<td>Brand:</td>"
+                                    if(res.items[i].brand)
+                                        cnt+="<td>"+res.items[i].brand+" </td>"
+                                    cnt+="</tr>"
+                                    +"<tr>"
+                                    +"<td>Model:</td>"
+                                    if(res.items[i].model)
+                                        cnt+="<td>"+res.items[i].model+" </td>"
+                                    cnt+="</tr>"
+                                    +"<tr>"
+                                    +"<td>Description:</td>"
+                                    if(res.items[i].description)
+                                            cnt+="<td>"+res.items[i].description+" </td>"
+                                    cnt+="</tr>"
+                                    cnt+="</tr>"
+                                    +"<tr>"
+                                    +"<td>Serial No:</td>"
+                                    +"<td>"
+                                    for(var j=0;j<res.items[i].serials.length;j++){ 
+                                        if(res.items[i].serials[j].serial)
+                                            cnt+="<div>"+res.items[i].serials[j].serial+" </div>"
+                                    }
+                                    cnt+="</td>"
+                                    +"</tr>"
+                                
+                            +"</tbody>"
+                        +"</table>"  
+                    }
+                +"</div>"
+                if (res.company)
+                    cnt += "<div style=\"font-size: 16px; font-weight: bold; padding-bottom: 5px; color: NAVY;\">" + res.company + "</div>" ;
+                if (res.summary)
+                    cnt += "<div style=\"font-size: 16px; font-weight: bold; padding-bottom: 5px;\">" + res.summary + "</div>" ;
+
+                if (res.date)
+                    cnt += "<div style=\"font-size: 14px; padding-bottom: 5px;\">" + res.date + "</div>" ;
+                if (res.statusmessage)
+                    cnt += "<div style=\"font-size: 14px; padding-bottom: 5px;\">" + res.statusmessage + "</div>" ;
+
+                if (res.MAIN) {
+                    cnt += "<div style=\"font-size: 12px; display: table; width: 100%; border: 1px solid #999999;\">";
+                    var entries = Object.entries(res.MAIN);
+                    for (var e=0; e<entries.length; e++) {
+                        cnt += "<div style=\"display: table-row; padding: 2px;\"><div style=\"display: table-cell; font-size: 14px;\">" + entries[e][0] + "</div>" ;
+                        cnt += "<div style=\"display: table-cell; font-size: 14px; padding: 2px;\"> : " + entries[e][1] + "</div></div>" ;
+                    }
+                    cnt += "</div>" ;
+                }
+
+                if (res.DETAILS) { 
+                    cnt += "<table class=\"detailstable\">" 
+                        + "<tr><th colspan=\"2\">Details</th></tr>"; 
+                    var entries = Object.entries(res.DETAILS);
+                    for (var e=0; e<entries.length; e++) {
+                        if (entries[e][1] != ""
+                            && entries[e][1] != "0.0") {
+                                if (entries[e][0] == "Exchange" && entries[e][1] == "1.0") {
+                                    //do nothing
+                                }
+                                else
+                                {
+                                    cnt += "<tr>"
+                                + "<td>" + entries[e][0] + " : </td>"   
+                                + "<td>" + entries[e][1] + "</td>"
+                                + "</tr>";
+                                }                            
+                        }
+                    }
+                    cnt += "</table>";
+                }
+
+
+                if (res.ITEMS) {
+                    cnt += CastServiceRequestItems(res.ITEMS);
+                }
+
+                if (res.ATTACHMENTS) {
+                    cnt += CastAttachments(res.ATTACHMENTS, res.id, res.ptype);
+                }
+
+                if (res.COMMENTS) {
+                    cnt += CastComments(res.COMMENTS);
+                }
+
+                if (res.REMINDERS) {
+                    cnt += CastReminders(res.REMINDERS);
+                }
+
+                if (res.EVENTS) {
+                    cnt += CastEvents(res.EVENTS);
+                }
+
+                if (res.APPROVALS) {
+                    cnt += CastApprovals(res.APPROVALS);
+                }
+
+                if (res.EMAIL) {
+                    cnt += CastEmails(res.EMAIL);
+                }
+                cnt += "</div>";
+                getEcsObjectNS("CommonEntityHolder").innerHTML = cnt; 
+                toggleMasterIcons("CommonEntityHolder");
+            }
+        }
+
+        function localCallback() {
+            event.preventDefault();
+            document.location.href = callback;           
+        }
+    </script>
+</head>
+
+
+
+<body onLoad="javascrpt:InitPage()" id="WholePageBody" style="overflow-y : scroll; overflow-x : hidden;">
+    <div id="homebody">
+        <%@ include file="/res/includes/header.jsp" %>
+        <div id="MasterHolders">
+            <div id="CommonEntityHolder"><div style="text-align: center; padding-top: 50px;"><img 
+                src="/res/img/indicator-circle.gif"></div></div>
+            <div id="BranchSelector" style="display: none;"></div>
+            <div id="CommonFormHolder" style="display: none;"></div>
+        </div>   
+        
+    </div>
+</body>
+</html>
